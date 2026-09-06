@@ -1,0 +1,23 @@
+HARBOR STRIKE / Audio credits
+All sources below are released under CC0 1.0:
+https://creativecommons.org/publicdomain/zero/1.0/
+
+rifle.mp3, sniper.mp3, shotgun.mp3
+The Free Firearm Sound Library
+Ben Jaszczak, Brian Nelson, Kevin Heras, Matthew Nanney
+https://opengameart.org/node/21826
+Source takes: AR-15/D_32P.wav; Tikka/W_29P.wav; Nova/O_21P.wav.
+Edits: single-shot excerpts, mono conversion, high-pass filter, fade-out,
+peak limiter and MP3 encoding. Runtime distance attenuation and panning.
+These are recorded firearms, mapped to the game's fictional weapon models.
+
+explosion.mp3
+Chunky Explosion by Joth
+https://opengameart.org/content/chunky-explosion
+Original MP3; runtime distance attenuation and panning.
+
+reload.mp3
+Gun reload sounds by SpringySpringo
+https://opengameart.org/content/gun-reload-sounds
+Source: assaultriflereload1_0.wav (airsoft mechanism recording).
+Edits: leading silence removed, mono conversion, MP3 encoding.
