@@ -1,0 +1,10 @@
+VISUAL ASSET CREDITS
+
+Concrete Floor 01 — Poly Haven, CC0 1.0.
+https://polyhaven.com/a/concrete_floor_01
+https://polyhaven.com/license
+Powered by Poly Haven (asset discovery via the Poly Haven API).
+Diffuse, OpenGL normal and roughness maps: original 1K JPG files.
+
+Weapon meshes and first-person hands are original procedural geometry built for Harbor Strike.
+No Call of Duty game assets are included. Military FPS games are a visual reference only.

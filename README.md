@@ -48,6 +48,7 @@ GitHub 儲存庫的 **Settings → Pages** 設為 **Deploy from a branch → mai
 - `src/weapons.ts`：武器數值與傷害
 - `src/roster.ts`：人數限制與出生位置
 - `src/audio.ts`：音效載入、距離衰減及左右聲道
+- `src/visuals.ts`：細分槍枝模型、PBR 材質與貨櫃標示
 - `src/App.tsx`：操作介面
 - `public/audio/`：音效與授權來源
 - `docs/`：GitHub Pages 可直接發布的建置結果
@@ -61,6 +62,16 @@ GitHub 儲存庫的 **Settings → Pages** 設為 **Deploy from a branch → mai
 - [Gun reload sounds](https://opengameart.org/content/gun-reload-sounds)：SpringySpringo
 
 此版本由原本的 Sites 遊戲轉換為獨立 Vite 靜態網頁。
+
+## 視覺更新
+
+- 步槍、狙擊槍、散彈槍及手榴彈採原創幾何模型，加入護木、導軌、槍托、瞄具與戴手套的手臂。
+- 金屬、塑膠及布料使用不同粗糙度，加入微細磨痕與環境反射。
+- 瞄準舉槍、移動晃動、後座、切槍及換彈動作；槍口焰只在實際開火時出現。
+- 混凝土地面使用 [Poly Haven Concrete Floor 01](https://polyhaven.com/a/concrete_floor_01) 的 CC0 色彩、法線和粗糙度貼圖；來源見 [材質授權](public/textures/credits.txt)。Powered by Poly Haven。
+- 改善色調映射、港區霧氣、貨櫃門鎖與貨運編號、AI 頭盔及四肢輪廓。
+
+此遊戲是原創輕量網頁 FPS，未使用 Call of Duty 的模型或素材。
 
 ## 效能改善與測試
 

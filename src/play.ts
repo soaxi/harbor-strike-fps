@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SpatialGrid } from './spatial';
+import { addPortMarkings, buildWeapons, createSurfaceLibrary } from './visuals';
 import {
   DEFAULT_ROSTER,
   normalizeRoster,
@@ -46,8 +47,8 @@ type Actor = {
 };
 export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   const s = new T.Scene();
-  s.background = new T.Color('#93adb8');
-  s.fog = new T.Fog('#93adb8', 38, 100);
+  s.background = new T.Color('#a3adb2');
+  s.fog = new T.Fog('#a3adb2', 28, 100);
   const c = new T.PerspectiveCamera(76, innerWidth / innerHeight, 0.06, 180);
   c.rotation.order = 'YXZ';
   const r = new T.WebGLRenderer({ antialias: true });
@@ -59,10 +60,11 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   r.shadowMap.needsUpdate=true;
   let needsRender=true;
   r.outputColorSpace = T.SRGBColorSpace;
+  r.toneMapping=T.ACESFilmicToneMapping;r.toneMappingExposure=1.12;
   host.appendChild(r.domElement);
-  s.add(new T.HemisphereLight(0xcfe7f2, 0x55523d, 2.4));
+  s.add(new T.HemisphereLight(0xc7d5e3, 0x363b3c, 1.25));
   const sun = new T.DirectionalLight(0xffe5b2, 3.1);
-  sun.position.set(-20, 34, 12);
+  sun.position.set(-27, 23, -18);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   Object.assign(sun.shadow.camera, {
@@ -76,8 +78,9 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   s.add(sun);
   const solids: T.Mesh[] = [],
     bounds: T.Box3[] = [];
-  const mat = (color: T.ColorRepresentation) =>
-    new T.MeshStandardMaterial({ color, roughness: 0.8 });
+  const surfaces=createSurfaceLibrary(r,s,()=>{needsRender=true;});
+  const materialCache=new Map<T.ColorRepresentation,T.MeshStandardMaterial>();
+  const mat=(color:T.ColorRepresentation)=>{if(color===0x667476)return surfaces.ground;if(color===0x777b73)return surfaces.concrete;let material=materialCache.get(color);if(!material){material=surfaces.painted(color);materialCache.set(color,material);}return material;};
   function box(
     x: number,
     y: number,
@@ -91,6 +94,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   ) {
     const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(color));
     m.position.set(x, y, z);
+    const uv=m.geometry.getAttribute('uv'),pos=m.geometry.getAttribute('position'),norm=m.geometry.getAttribute('normal');for(let i=0;i<pos.count;i++){const px=pos.getX(i)+x,py=pos.getY(i)+y,pz=pos.getZ(i)+z;if(Math.abs(norm.getY(i))>.5)uv.setXY(i,px*.35,pz*.35);else if(Math.abs(norm.getZ(i))>.5)uv.setXY(i,px*.5,py*.5);else uv.setXY(i,pz*.5,py*.5);}
     m.castShadow = true;
     m.receiveShadow = true;
     parent.add(m);
@@ -115,6 +119,14 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     }
     for (const q of [-1, 1])
       box(x + q * (w / 2 - 0.1), 1.75, z, 0.12, 3.5, d + 0.08, 0x9da59d);
+    // Rear doors: recessed seam, locking rods, hinges and handles.
+    box(x,1.75,z+d/2+.07,.038,3.38,.025,0x38494d);
+    for(const side of [-1,1]){
+      const door=x+side*w*.25;
+      box(door,1.75,z+d/2+.09,.045,3.24,.04,0x9da59d);
+      box(door-side*.13,1.15,z+d/2+.12,.3,.055,.045,0x38494d);
+      for(const y of [.4,1.6,2.95])box(x+side*(w/2-.15),y,z+d/2+.095,.3,.105,.045,0x9da59d);
+    }
   }
   container(-13, -12, 12, 5, 0x346574);
   container(12, 12, 12, 5, 0xa6613f);
@@ -159,65 +171,31 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   const staticGroups=new Map<number,T.Mesh[]>();
   s.updateMatrixWorld(true);
   for(const child of [...s.children]){if(!(child instanceof T.Mesh))continue;const material=child.material as T.MeshStandardMaterial;const key=material.color.getHex();const group=staticGroups.get(key)??[];group.push(child);staticGroups.set(key,group);}
-  for(const group of staticGroups.values()){const geometries=group.map(m=>m.geometry.clone().applyMatrix4(m.matrixWorld));const merged=mergeGeometries(geometries);if(!merged)throw Error('Unable to batch port scenery');const mesh=new T.Mesh(merged,group[0].material);mesh.castShadow=true;mesh.receiveShadow=true;mesh.matrixAutoUpdate=false;mesh.updateMatrix();s.add(mesh);for(const old of group){s.remove(old);old.geometry.dispose();if(old!==group[0])(old.material as T.Material).dispose();}geometries.forEach(g=>g.dispose());}
+  for(const group of staticGroups.values()){const geometries=group.map(m=>m.geometry.clone().applyMatrix4(m.matrixWorld));const merged=mergeGeometries(geometries);if(!merged)throw Error('Unable to batch port scenery');const mesh=new T.Mesh(merged,group[0].material);mesh.castShadow=true;mesh.receiveShadow=true;mesh.matrixAutoUpdate=false;mesh.updateMatrix();s.add(mesh);for(const old of group){s.remove(old);old.geometry.dispose();}geometries.forEach(g=>g.dispose());}
+  const markings=addPortMarkings(s);
   const gun = new T.Group();
   c.add(gun);
   s.add(c);
-  const gunModels: T.Group[] = [];
-  for (let slot = 0; slot < 4; slot++) {
-    const g = new T.Group();
-    gun.add(g);
-    gunModels.push(g);
-    if (slot === 3) {
-      const grenade = new T.Mesh(
-        new T.SphereGeometry(0.105, 10, 8),
-        mat(0x65734b),
-      );
-      grenade.position.set(0.24, -0.28, -0.42);
-      g.add(grenade);
-      box(0.24, -0.16, -0.42, 0.04, 0.12, 0.04, 0x2b3539, false, g);
-      box(0.28, -0.19, -0.42, 0.03, 0.16, 0.06, 0x808b81, false, g);
-    } else {
-      const len = slot === 1 ? 0.95 : slot === 2 ? 0.72 : 0.55;
-      box(
-        0.22,
-        -0.22,
-        -0.44,
-        0.15,
-        0.16,
-        len,
-        slot === 1 ? 0x536653 : 0x27343b,
-        false,
-        g,
-      );
-      box(0.22, -0.18, -0.55 - len / 2, 0.055, 0.055, 0.5, 0x131c23, false, g);
-      box(0.22, -0.36, -0.4, 0.095, 0.25, 0.14, 0x1b242b, false, g);
-      if (slot === 1) {
-        box(0.22, -0.06, -0.53, 0.105, 0.1, 0.35, 0x15262b, false, g);
-        box(0.22, -0.01, -0.39, 0.11, 0.1, 0.05, 0x5291a0, false, g);
-      } else if (slot === 2) {
-        box(0.22, -0.28, -0.72, 0.17, 0.1, 0.3, 0x8c6741, false, g);
-        box(0.22, -0.24, -1, 0.055, 0.055, 0.3, 0x111b1d, false, g);
-      } else box(0.22, -0.105, -0.44, 0.05, 0.04, 0.22, 0x121a20, false, g);
-    }
-    box(0.3, -0.37, -0.15, 0.14, 0.15, 0.44, 0x54635d, false, g);
-    g.traverse((o) => {
-      o.castShadow = false;
-      o.frustumCulled = false;
-    });
-    g.visible = slot === 0;
-  }
+  const arsenal=buildWeapons(),gunModels=arsenal.models;gunModels.forEach(g=>gun.add(g));
+  gun.position.set(.23,-.23,-.3);
+  const muzzleGeometry=new T.ConeGeometry(.048,.19,7),muzzleMaterial=new T.MeshBasicMaterial({color:0xffd599,transparent:true,opacity:.9,blending:T.AdditiveBlending,depthWrite:false});
+  const muzzleFlash=new T.Mesh(muzzleGeometry,muzzleMaterial);muzzleFlash.rotation.x=-Math.PI/2;muzzleFlash.visible=false;gun.add(muzzleFlash);
+  const weaponLight=new T.PointLight(0xc6dbed,1.2,3);weaponLight.position.set(-.25,.4,.2);c.add(weaponLight);
   const flash = new T.PointLight(0xffc766, 0, 4);
-  flash.position.set(0.22, -0.18, -1.05);
+  flash.position.copy(arsenal.muzzles[0]);
   gun.add(flash);
-  // Twelve instanced batches render up to 100 soldiers without hundreds of draw calls.
+  // Instanced body parts retain a fixed draw-call count for up to 100 soldiers.
   const parts = [
-    [0, 1.05, 0, 0.62, 0.75, 0.38],
+    [0, 1.05, 0, 0.5, 0.7, 0.32],
     [0, 1.64, 0, 0.4, 0.4, 0.4],
     [0, 1.63, -0.22, 0.32, 0.13, 0.03],
     [-0.2, 0.35, 0, 0.22, 0.7, 0.25],
     [0.2, 0.35, 0, 0.22, 0.7, 0.25],
     [0.37, 1.12, -0.3, 0.12, 0.13, 0.65],
+    [-.3,1.1,-.08,.19,.55,.2],
+    [.3,1.1,-.08,.19,.55,.2],
+    [0,1.08,-.18,.39,.45,.13],
+    [0,1.1,.22,.34,.45,.18],
   ];
   const batches: T.InstancedMesh[][] = [];
   for (let team = 0; team < 2; team++) {
@@ -225,15 +203,19 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
       const color =
         i === 0
           ? team === 0
-            ? 0x498eae
-            : 0xd28558
+            ? 0x4f6974
+            : 0x7c6950
           : i === 2
             ? team === 0
-              ? 0x9addeb
-              : 0xffb870
-            : 0x344147;
+              ? 0x7395a0
+              : 0xb79565
+            : i===8||i===9?0x41483d:0x344147;
+      let geometry:T.BufferGeometry;
+      if(i===1){geometry=new T.SphereGeometry(1,12,8);geometry.scale(part[3]/2,part[4]/2,part[5]/2);}
+      else if([0,3,4,6,7].includes(i)){geometry=new T.CapsuleGeometry(part[3]/2,Math.max(.01,part[4]-part[3]),4,8);geometry.scale(1,1,part[5]/part[3]);}
+      else geometry=new T.BoxGeometry(part[3],part[4],part[5]);
       const m = new T.InstancedMesh(
-        new T.BoxGeometry(part[3], part[4], part[5]),
+        geometry,
         mat(color),
         50,
       );
@@ -300,6 +282,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     aim = false,
     reloadTime = 0,
     shot = 0,
+    kick=0, switchPose=0, swayX=0,swayY=0,
     now = 0,
     raf = 0,
     last = performance.now(),
@@ -368,7 +351,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     reloadTime = 0;
     yaw = 0;
     pitch = 0;
-    shot = 0;
+    shot = 0;kick=0;switchPose=0;
     jump = 0;
     vy = 0;
     ammo = WEAPONS.map((w) => w.mag);
@@ -400,6 +383,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     h.ammo = ammo[weapon];
     h.reserve = reserve[weapon];
     gunModels.forEach((m, i) => (m.visible = i === weapon));
+    flash.position.copy(arsenal.muzzles[weapon]);muzzleFlash.position.copy(arsenal.muzzles[weapon]);
   }
   function selectWeapon(slot: number) {
     if (player.hp <= 0 || slot === weapon) return;
@@ -408,7 +392,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     reloadTime = 0;
     fire = false;
     aim = false;
-    shot = Math.max(shot, 0.2);
+    shot = Math.max(shot, 0.2);switchPose=1;
     syncWeapon();
   }
   function free(x: number, z: number) {
@@ -522,7 +506,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
       return;
     }
     audio.play(w.sound);
-    flash.intensity = 5;
+    flash.intensity = 5;kick=weapon===1?1:weapon===2?.9:.5;
     const origin = c.position.clone();
     for (let pellet = 0; pellet < w.pellets; pellet++) {
       const spread = weapon === 1 && aim ? 0.0006 : w.spread * (aim ? 0.65 : 1);
@@ -787,12 +771,18 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
         c.position.set(player.p.x, 1.65 + jump, player.p.z);
         c.rotation.set(pitch, yaw, 0);
         if (fire) shoot();
-        gun.visible = true;
-        gun.position.y = h.reload
-          ? -0.3 + Math.sin(now * 8) * 0.07
-          : Math.sin(now * 9) * 0.008 * (x || z ? 1 : 0);
-        gun.rotation.z = h.reload ? -0.35 : 0;
-        gun.position.z = shot > 0 ? shot * 0.3 : 0;
+        gun.visible = !(aim&&weapon===1);
+        const moving=Boolean(x||z),blend=1-Math.exp(-18*dt),sprint=moving&&keys.has('ShiftLeft')&&!aim;
+        const reloadProgress=h.reload?1-reloadTime/WEAPONS[weapon].reload:0,lower=h.reload?Math.sin(Math.PI*reloadProgress):0;
+        kick*=Math.exp(-13*dt);switchPose*=Math.exp(-14*dt);swayX*=Math.exp(-10*dt);swayY*=Math.exp(-10*dt);
+        const bob=moving?Math.sin(now*(sprint?13:9))*.009:Math.sin(now*1.8)*.0018;
+        const ads=aim&&weapon!==3;
+        gun.position.x=T.MathUtils.lerp(gun.position.x,(ads?0:.23)+swayX+bob,blend);
+        gun.position.y=T.MathUtils.lerp(gun.position.y,(ads?(weapon===2?-.061:-.12):-.23)+bob*.65-lower*.24-switchPose*.18-(sprint?.06:0),blend);
+        gun.position.z=T.MathUtils.lerp(gun.position.z,(ads?-.22:-.3)+kick*.1,blend);
+        gun.rotation.set(kick*.12-lower*.35+swayY,sprint?.35:lower*.22,lower*-.6+(sprint?-.24:0)+swayX*.8);
+        arsenal.magazines[weapon].position.y=h.reload?-Math.sin(reloadProgress*Math.PI)*.16:0;
+        muzzleFlash.visible=weapon!==3&&shot>.055&&flash.intensity>.1;muzzleFlash.scale.setScalar(.8+Math.random()*.4);
         const targetFov=aim?WEAPONS[weapon].fov:76;
         if(Math.abs(c.fov-targetFov)>.01){c.fov=T.MathUtils.lerp(c.fov,targetFov,1-Math.exp(-14*dt));c.updateProjectionMatrix();}
       } else {
@@ -843,6 +833,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   const mouse = (e: MouseEvent) => {
     if (document.pointerLockElement === r.domElement && player.hp > 0) {
       yaw -= e.movementX * 0.002;
+      swayX=T.MathUtils.clamp(swayX-e.movementX*.00007,-.025,.025);swayY=T.MathUtils.clamp(swayY-e.movementY*.00005,-.02,.02);
       pitch = T.MathUtils.clamp(pitch - e.movementY * 0.002, -1.4, 1.4);
     }
   };
@@ -929,10 +920,10 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
             v.dispose(),
           );
       });
+      surfaces.dispose();arsenal.dispose();markings.dispose();
       r.dispose();
       r.domElement.remove();
       audio.dispose();
     },
   };
 }
-
