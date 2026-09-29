@@ -1,4 +1,6 @@
 import * as T from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { SpatialGrid } from './spatial';
 import {
   DEFAULT_ROSTER,
   normalizeRoster,
@@ -53,6 +55,9 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   r.setPixelRatio(Math.min(devicePixelRatio, 1.7));
   r.shadowMap.enabled = true;
   r.shadowMap.type = T.PCFShadowMap;
+  r.shadowMap.autoUpdate=false;
+  r.shadowMap.needsUpdate=true;
+  let needsRender=true;
   r.outputColorSpace = T.SRGBColorSpace;
   host.appendChild(r.domElement);
   s.add(new T.HemisphereLight(0xcfe7f2, 0x55523d, 2.4));
@@ -150,6 +155,11 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     box(x, 24, 0, 0.8, 0.9, 32, 0x9e7044);
     box(x, 17, -13, 0.1, 13, 0.1, 0x343f42);
   }
+  // Only the unmoving scenery casts shadows. Merge equal materials once.
+  const staticGroups=new Map<number,T.Mesh[]>();
+  s.updateMatrixWorld(true);
+  for(const child of [...s.children]){if(!(child instanceof T.Mesh))continue;const material=child.material as T.MeshStandardMaterial;const key=material.color.getHex();const group=staticGroups.get(key)??[];group.push(child);staticGroups.set(key,group);}
+  for(const group of staticGroups.values()){const geometries=group.map(m=>m.geometry.clone().applyMatrix4(m.matrixWorld));const merged=mergeGeometries(geometries);if(!merged)throw Error('Unable to batch port scenery');const mesh=new T.Mesh(merged,group[0].material);mesh.castShadow=true;mesh.receiveShadow=true;mesh.matrixAutoUpdate=false;mesh.updateMatrix();s.add(mesh);for(const old of group){s.remove(old);old.geometry.dispose();if(old!==group[0])(old.material as T.Material).dispose();}geometries.forEach(g=>g.dispose());}
   const gun = new T.Group();
   c.add(gun);
   s.add(c);
@@ -235,14 +245,15 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     });
   }
   const dummy = new T.Object3D(),
-    local = new T.Matrix4();
+    local = new T.Matrix4(), combined = new T.Matrix4();
   function renderActors() {
     for (let team = 0; team < 2; team++)
       for (let i = 0; i < parts.length; i++) {
         const batch = batches[team][i],
           part = parts[i];
         local.makeTranslation(part[0], part[1], part[2]);
-        for (let slot = 0; slot < 50; slot++) {
+        batch.count=teams[team].length;
+        for (let slot = 0; slot < batch.count; slot++) {
           const a = teams[team][slot];
           if (a && a.hp > 0 && a !== player) {
             dummy.position.copy(a.p);
@@ -253,7 +264,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
             dummy.scale.setScalar(0);
           }
           dummy.updateMatrix();
-          batch.setMatrixAt(slot, dummy.matrix.clone().multiply(local));
+          batch.setMatrixAt(slot, combined.multiplyMatrices(dummy.matrix,local));
         }
         batch.instanceMatrix.needsUpdate = true;
       }
@@ -305,8 +316,13 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
   const grenades: { mesh: T.Mesh; v: T.Vector3; fuse: number; owner: Actor }[] =
     [];
   const blasts: { mesh: T.Mesh; life: number }[] = [];
-  const ray = new T.Raycaster(),
-    effects: { obj: T.Line; life: number }[] = [];
+  const ray = new T.Raycaster();
+  const crowd=new SpatialGrid<Actor>();
+  const tracerCapacity=72,tracerLife=new Float32Array(tracerCapacity),tracerPositions=new Float32Array(tracerCapacity*6),tracerColors=new Float32Array(tracerCapacity*6);
+  const tracerGeometry=new T.BufferGeometry();
+  const positions=new T.BufferAttribute(tracerPositions,3).setUsage(T.DynamicDrawUsage),colors=new T.BufferAttribute(tracerColors,3).setUsage(T.DynamicDrawUsage);
+  tracerGeometry.setAttribute('position',positions);tracerGeometry.setAttribute('color',colors);
+  const tracerLines=new T.LineSegments(tracerGeometry,new T.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.8}));tracerLines.frustumCulled=false;s.add(tracerLines);const tracerColor=new T.Color();
   function actor(team: number, i: number, isPlayer = false) {
     const g = new T.Group();
     const a: Actor = {
@@ -363,6 +379,8 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     fire = false;
     aim = false;
     nav.clear();
+    needsRender=true;
+    tracerLife.fill(0);tracerPositions.fill(0);positions.needsUpdate=true;
     for (const item of [...grenades, ...blasts]) {
       s.remove(item.mesh);
       item.mesh.geometry.dispose();
@@ -375,6 +393,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
       Math.min(devicePixelRatio, actors.length > 50 ? 1.25 : 1.7),
     );
     renderActors();
+    c.fov=76;c.updateProjectionMatrix();
   }
   function syncWeapon() {
     h.weapon = weapon;
@@ -426,18 +445,10 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     if (!a.hp) {
       a.mesh.visible = false;
       h.feed = [`${from.name}  ▸  ${a.name}`, ...h.feed].slice(0, 4);
-      if (from === player) h.kills++;
+      if (from === player && a.team!==player.team) h.kills++;
     }
   }
-  function tracer(a: T.Vector3, b: T.Vector3, col: number) {
-    if (effects.length > 70) return;
-    const o = new T.Line(
-      new T.BufferGeometry().setFromPoints([a, b]),
-      new T.LineBasicMaterial({ color: col, transparent: true, opacity: 0.8 }),
-    );
-    s.add(o);
-    effects.push({ obj: o, life: 0.07 });
-  }
+  function tracer(a:T.Vector3,b:T.Vector3,col:number){const i=tracerLife.findIndex(life=>life<=0);if(i<0)return;const offset=i*6;a.toArray(tracerPositions,offset);b.toArray(tracerPositions,offset+3);tracerColor.setHex(col);tracerColor.toArray(tracerColors,offset);tracerColor.toArray(tracerColors,offset+3);tracerLife[i]=.07;positions.needsUpdate=true;colors.needsUpdate=true;}
   function reload() {
     const w = WEAPONS[weapon];
     if (
@@ -617,6 +628,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     }
   }
   function updateAI(dt: number) {
+    crowd.rebuild(actors);
     for (const a of actors) {
       if (a === player || a.hp <= 0) continue;
       a.cool -= dt;
@@ -689,7 +701,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
           Math.sin(now + a.slot) * dt * 0.5,
         );
       // Nearby soldiers gently separate; bounded local work prevents a single pile-up.
-      for (const b of teams[a.team]) {
+      for (const b of crowd.near(a.p.x,a.p.z)) {
         if (a === b || b.hp <= 0) continue;
         const dx = a.p.x - b.p.x,
           dz = a.p.z - b.p.z,
@@ -726,12 +738,14 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     document.exitPointerLock();
     keys.clear();
     fire = false;
+    aim=false;audio.pause();
   }
   function tick() {
+    const activeFrame=h.mode==='playing';
     const t = performance.now(),
       dt = Math.min((t - last) / 1000, 0.05);
     last = t;
-    now += dt;
+    if(h.mode==='playing')now += dt;
     frameAverage =
       frameAverage * 0.95 +
       Math.max(0.001, (t - previousFrameTime) / 1000) * 0.05;
@@ -739,7 +753,7 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     if (h.mode === 'playing') {
       h.time = Math.max(0, h.time - dt);
       shot -= dt;
-      flash.intensity *= 0.55;
+      flash.intensity *= Math.exp(-36*dt);
       if (h.reload) {
         reloadTime -= dt;
         if (reloadTime <= 0) {
@@ -779,8 +793,8 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
           : Math.sin(now * 9) * 0.008 * (x || z ? 1 : 0);
         gun.rotation.z = h.reload ? -0.35 : 0;
         gun.position.z = shot > 0 ? shot * 0.3 : 0;
-        c.fov = T.MathUtils.lerp(c.fov, aim ? WEAPONS[weapon].fov : 76, 0.2);
-        c.updateProjectionMatrix();
+        const targetFov=aim?WEAPONS[weapon].fov:76;
+        if(Math.abs(c.fov-targetFov)>.01){c.fov=T.MathUtils.lerp(c.fov,targetFov,1-Math.exp(-14*dt));c.updateProjectionMatrix();}
       } else {
         gun.visible = false;
         const ally = actors.find(
@@ -805,37 +819,25 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
       c.lookAt(-2, 0, -3);
       gun.visible = false;
     }
-    for (let i = effects.length - 1; i >= 0; i--) {
-      const e = effects[i];
-      e.life -= dt;
-      if (e.life <= 0) {
-        s.remove(e.obj);
-        e.obj.geometry.dispose();
-        (e.obj.material as T.Material).dispose();
-        effects.splice(i, 1);
-      }
-    }
+    if(h.mode==='playing'){for(let i=0;i<tracerCapacity;i++){if(tracerLife[i]<=0)continue;tracerLife[i]-=dt;if(tracerLife[i]<=0){tracerPositions.fill(0,i*6,i*6+6);positions.needsUpdate=true;}}}
     hudTimer += dt;
     if (hudTimer > 0.08) {
       h.aiming = aim && player.hp > 0;
       h.audioStatus = audio.status;
-      h.fps = Math.round(1 / frameAverage);
+      if(h.mode==='playing')h.fps = Math.round(1 / frameAverage);
       update({ ...h, score: [...h.score], feed: [...h.feed] });
       hudTimer = 0;
     }
-    r.render(s, c);
+    if(activeFrame||needsRender){r.render(s,c);needsRender=false;}
     raf = requestAnimationFrame(tick);
   }
+  function pause(){if(h.mode!=='playing')return;h.mode='paused';keys.clear();fire=false;aim=false;h.aiming=false;audio.pause();}
   function lock() {
     if (document.pointerLockElement === r.domElement) {
       h.mode = 'playing';
       h.message = '';
     } else if (h.mode === 'playing') {
-      h.mode = 'paused';
-      keys.clear();
-      fire = false;
-      aim = false;
-      audio.pause();
+      pause();
     }
   }
   const mouse = (e: MouseEvent) => {
@@ -869,13 +871,12 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     c.aspect = innerWidth / innerHeight;
     c.updateProjectionMatrix();
     r.setSize(innerWidth, innerHeight);
+    needsRender=true;
   };
   const blur = () => {
     if (h.mode === 'playing') {
+      pause();
       document.exitPointerLock();
-      h.mode = 'paused';
-      keys.clear();
-      fire = false;
     }
   };
   document.addEventListener('pointerlockchange', lock);
@@ -934,3 +935,4 @@ export function startGame(host: HTMLDivElement, update: (h: HUD) => void) {
     },
   };
 }
+

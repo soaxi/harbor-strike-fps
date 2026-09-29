@@ -85,7 +85,7 @@ export class BattleAudio {
     node.start();
   }
   pause() {
-    void this.context?.suspend();
+    for (const voice of this.voices) voice.stop(); this.voices.clear(); void this.context?.suspend();
   }
   dispose() {
     for (const n of this.voices) n.stop();
@@ -93,4 +93,5 @@ export class BattleAudio {
     void this.context?.close();
   }
 }
+
 

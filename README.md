@@ -61,3 +61,16 @@ GitHub 儲存庫的 **Settings → Pages** 設為 **Deploy from a branch → mai
 - [Gun reload sounds](https://opengameart.org/content/gun-reload-sounds)：SpringySpringo
 
 此版本由原本的 Sites 遊戲轉換為獨立 Vite 靜態網頁。
+
+## 效能改善與測試
+
+- 同色靜態地圖合併為 19 個繪製物件，靜態陰影只建立一次。
+- 共用彈道幾何與角色變換暫存，減少交戰中的配置與回收。
+- AI 使用區域分桶尋找鄰近角色，避免每次避讓掃描全隊。
+- 暫停時凍結模擬時間並停止重畫；移出視窗會清除瞄準及音效。
+
+```sh
+npm test
+```
+
+測試涵蓋四種武器、彈藥、爆炸、切槍取消換彈、暫停及 100 人 AI 模擬。測試使用模擬繪圖器，不能代表實際顯示卡 FPS。
